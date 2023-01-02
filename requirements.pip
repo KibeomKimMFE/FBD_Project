@@ -1,0 +1,9 @@
+black
+ccxt
+dask
+matplotlib
+numpy
+pandas
+statsmodels
+vaex
+requests
