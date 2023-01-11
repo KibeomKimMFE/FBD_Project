@@ -4,6 +4,7 @@ dask
 matplotlib
 numpy
 pandas
+seaborn
 statsmodels
 vaex
 requests
