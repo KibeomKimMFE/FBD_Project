@@ -6,16 +6,6 @@ from scipy.linalg import block_diag
 
 
 def extract_features(orderbook_file_path: str) -> pd.DataFrame:
-    """
-    reads csv file of given path and extracts level 1 orderbook data.
-    Then it calculates mid price, bid-ask spread and imbalance.
-
-    Args:
-        orderbook_file_path (str): path of the csv file.
-
-    Returns:
-        pd.DataFrame: level 1 orderbook data.
-    """
     df = pd.read_csv(orderbook_file_path)[
         [
             "timestamp",
@@ -42,24 +32,21 @@ def extract_features(orderbook_file_path: str) -> pd.DataFrame:
     return df
 
 
-def preprocess_data(
-    df: pd.DataFrame, numSpreads: int = 4, numImbalance: int = 4
+def symmetrize_data(
+    df_feature: pd.DataFrame, numSpreads: int = 4, numImbalance: int = 4
 ) -> pd.DataFrame:
-    """
-    this function converts the spread and imbalance value into discretized
-    value and calculates difference of mid prices using current and next value.
-    Also, it adds symmetrized data which is discussed in Stoikov(2018).
+    """_summary_
 
     Args:
-        df (pd.DataFrame): dataset containing bid,ask and its volumes.
-        numSpreads (int, optional): number of spreads to discretize.
-        numImbalance (int, optional): number of imbalance to discretize.
+        df_feature (pd.DataFrame): _description_
+        numSpreads (int, optional): _description_. Defaults to 4.
+        numImbalance (int, optional): _description_. Defaults to 4.
 
     Returns:
-        pd.DataFrame: symmetrized dataset.
+        pd.DataFrame: _description_
     """
 
-    df_signal = df.copy(deep=True)
+    df_signal = df_feature.copy(deep=True)
     tick_size = df_signal.ba_spread[df_signal.ba_spread != 0].min()
 
     # discretize bidask spread then get next time's bidask spread
@@ -68,7 +55,7 @@ def preprocess_data(
     df_signal = df_signal[df_signal.ba_spread <= numSpreads * tick_size]
     df_signal["ba_spread"] = np.round(df_signal["ba_spread"].div(tick_size)).astype(int)
     df_signal["imbalance"] = pd.cut(
-        df["imbalance"],
+        df_feature["imbalance"],
         bins=np.arange(numImbalance + 1) / numImbalance,
         labels=np.arange(1, numImbalance + 1),
     ).astype(int)
@@ -98,27 +85,22 @@ def preprocess_data(
     return df.dropna()
 
 
-def get_micro_adjustment(df_sym: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
-    """
-    calculates micro price adjustment g1 and B given
-    symmetrized dataset containing current and next step's (imbalance and spread).
-    Note that imbalance and spread should be 'discretized' before running.
+def get_micro_adjustment(df_sig: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
+    """_summary_
 
     Args:
-        df_sym (pd.DataFrame): symmetrized dataset containnig
+        df_sig (pd.DataFrame): _description_
 
     Returns:
-        g1, B (list[np.ndarray, np.ndarray]): micro price adjustments. See the Stoikov (2018).
+        list[np.ndarray, np.ndarray]: _description_
     """
-
-    # find the number of imbalance, spread and these combinations.
-    nSpread, nImbalance = len(df_sym.ba_spread.unique()), len(df_sym.imbalance.unique())
+    nSpread, nImbalance = len(df_sig.ba_spread.unique()), len(df_sig.imbalance.unique())
     nCombination = nSpread * nImbalance
 
     # divide datafrmae into two events (dM equals to 0 or not equal to 0)
     mid_zero, mid_non_zero = (
-        df_sym[df_sym["mid_chg"] == 0],
-        df_sym[df_sym["mid_chg"] != 0],
+        df_sig[df_sig["mid_chg"] == 0],
+        df_sig[df_sig["mid_chg"] != 0],
     )
 
     # transition matrix Q
@@ -126,7 +108,7 @@ def get_micro_adjustment(df_sym: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
         "mid_price"
     ].count()
     Q_cnt = pd.DataFrame(
-        [],
+        0,
         index=pd.MultiIndex.from_product(
             [
                 list(range(1, nSpread + 1)),
@@ -136,8 +118,7 @@ def get_micro_adjustment(df_sym: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
             names=["ba_spread", "imbalance", "next_imbalance"],
         ),
         columns=["cnt"],
-    ).fillna(0)
-
+    )
     Q_cnt.loc[mid_zero.index] = mid_zero.values.reshape(-1, 1)
     Q_cnt = block_diag(
         Q_cnt.loc[1].values.reshape(nSpread, nImbalance),
@@ -150,16 +131,23 @@ def get_micro_adjustment(df_sym: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
     R = (
         mid_non_zero.groupby(["ba_spread", "imbalance", "mid_chg"])
         .count()
-        .unstack("mid_chg")
+        .unstack("mid_chg")["mid_price"]
+        .fillna(0)
     )
-    R = R["mid_price"].fillna(0).values
+    R_cnt = pd.DataFrame(
+        0,
+        index=pd.MultiIndex.from_product(
+            [list(range(1, nSpread + 1)), list(range(1, nImbalance + 1))],
+            names=["ba_spread", "imbalance"],
+        ),
+        columns=R.columns.values,
+    )
+    R_cnt.loc[R.index] = R.values
+    R_cnt = R_cnt.values
 
-    # get transition matrix (transient, absorbing state)
-    J = np.concatenate([Q_cnt, R], axis=1)
-
-    # calculate probability
-    J = J / J.sum(axis=1).reshape(-1, 1)
-    J = np.nan_to_num(J, nan=0)
+    # get transition prob matrix (transient, absorbing state)
+    J = np.concatenate([Q_cnt, R_cnt], axis=1)
+    J = np.nan_to_num(J / J.sum(axis=1).reshape(-1, 1), nan=0)
 
     # split Q, R and define K
     Q, R = J[:, :nCombination], J[:, nCombination:]
@@ -169,16 +157,30 @@ def get_micro_adjustment(df_sym: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
     g1 = inv(I - Q) @ R @ K
 
     # define new absorbing state
-    T_cnt = mid_non_zero.pivot_table(
+    T_cnt = pd.DataFrame(
+        0,
+        index=pd.MultiIndex.from_product(
+            [list(range(1, nSpread + 1)), list(range(1, nImbalance + 1))],
+            names=["ba_spread", "imbalance"],
+        ),
+        columns=pd.MultiIndex.from_product(
+            [list(range(1, nSpread + 1)), list(range(1, nImbalance + 1))],
+            names=["next_ba_spread", "next_imbalance"],
+        ),
+    )
+    T = mid_non_zero.pivot_table(
         index=["ba_spread", "imbalance"],
         columns=["next_ba_spread", "next_imbalance"],
         values="mid_price",
         fill_value=0,
         aggfunc="count",
-    ).values
+    )
+    T_cnt.loc[T.index, T.columns] = T.values
+    T_cnt = T_cnt.values
 
+    # calculate new trans. prob matrix
     J2 = np.concatenate([Q_cnt, T_cnt], axis=1)
-    J2 = J2 / J2.sum(axis=1).reshape(-1, 1)
+    J2 = np.nan_to_num(J2 / J2.sum(axis=1).reshape(-1, 1), nan=0)
 
     # new Q and T
     Q, T = J2[:, :nCombination], J2[:, nCombination:]
