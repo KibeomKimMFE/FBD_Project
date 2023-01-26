@@ -33,7 +33,7 @@ def extract_features(orderbook_file_path: str) -> pd.DataFrame:
 
 
 def symmetrize_data(
-    df_feature: pd.DataFrame, numSpreads: int = 4, numImbalance: int = 4
+    df_feature: pd.DataFrame, numSpreads: int = 4, numImbalance: int = 4, numdM: int = 2
 ) -> pd.DataFrame:
     """_summary_
 
@@ -51,7 +51,6 @@ def symmetrize_data(
 
     # discretize bidask spread then get next time's bidask spread
     # discretize imbalance and get next imbalance
-    # cap spread values that goes over 0.2 as 0.25 (group 5 means spread is over 0.2)
     df_signal = df_signal[df_signal.ba_spread <= numSpreads * tick_size]
     df_signal["ba_spread"] = np.round(df_signal["ba_spread"].div(tick_size)).astype(int)
     df_signal["imbalance"] = pd.cut(
@@ -63,10 +62,14 @@ def symmetrize_data(
     # calculate change in mid price
     # include data that bidask spread is within 0.2, same goes for
     # mid price change
-    df_signal["mid_chg"] = np.round(df_signal["mid_price"].diff(), 2).shift(
-        -1,
+    df_signal["mid_chg"] = (
+        np.round(df_signal["mid_price"].diff().div(tick_size))
+        .mul(tick_size)
+        .shift(
+            -1,
+        )
     )
-    df_signal = df_signal[abs(df_signal.mid_chg) <= 0.1]
+    df_signal = df_signal[abs(df_signal.mid_chg) <= tick_size * numdM]
 
     df_signal["next_ba_spread"] = df_signal["ba_spread"].shift(-1)
     df_signal["next_imbalance"] = df_signal["imbalance"].shift(-1)
@@ -103,6 +106,7 @@ def get_micro_adjustment(df_sig: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
         df_sig[df_sig["mid_chg"] != 0],
     )
 
+    print(mid_zero.shape, mid_non_zero.shape)
     # transition matrix Q
     mid_zero = mid_zero.groupby(["ba_spread", "imbalance", "next_imbalance"])[
         "mid_price"
@@ -134,6 +138,9 @@ def get_micro_adjustment(df_sig: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
         .unstack("mid_chg")["mid_price"]
         .fillna(0)
     )
+    # K contains all the non-zero mid price chg.
+    K = R.columns.values.reshape(-1, 1)
+
     R_cnt = pd.DataFrame(
         0,
         index=pd.MultiIndex.from_product(
@@ -149,9 +156,8 @@ def get_micro_adjustment(df_sig: pd.DataFrame) -> list[np.ndarray, np.ndarray]:
     J = np.concatenate([Q_cnt, R_cnt], axis=1)
     J = np.nan_to_num(J / J.sum(axis=1).reshape(-1, 1), nan=0)
 
-    # split Q, R and define K
-    Q, R = J[:, :nCombination], J[:, nCombination:]
-    I, K = np.eye(nCombination), np.array([-0.1, -0.05, 0.05, 0.1]).reshape(-1, 1)
+    # split Q, R and define I
+    Q, R, I = J[:, :nCombination], J[:, nCombination:], np.eye(nCombination)
 
     # 1st order micro-price adjustment
     g1 = inv(I - Q) @ R @ K
