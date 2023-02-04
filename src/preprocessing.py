@@ -29,7 +29,7 @@ def extract_features(orderbook_file_path: str) -> pd.DataFrame:
 
     # calculate mid price and bidask spread
     df["mid_price"] = (df["asks[0].price"] + df["bids[0].price"]) / 2
-    df["ba_spread"] = np.round((df["asks[0].price"] - df["bids[0].price"]), 2)
+    df["ba_spread"] = np.round((df["asks[0].price"] - df["bids[0].price"]), 5)
     df["imbalance"] = df["bids[0].amount"] / (
         df["bids[0].amount"] + df["asks[0].amount"]
     )
