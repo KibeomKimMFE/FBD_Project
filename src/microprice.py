@@ -6,7 +6,12 @@ from scipy.linalg import block_diag
 
 
 def get_micro_adjustment(df_sig: pd.DataFrame, power: int = 6) -> pd.DataFrame:
-    """_summary_
+    """
+    Computes microprice adjustments for all (imblance, spread) pairs.
+    This function estimates all transition, absorbing state matrices given df_sig and then
+    calculates B, g. Given the power input, the final adjustment is calculated by
+
+    microprice = B**power @ g
 
     Args:
         df_sig (pd.DataFrame): a symmetrized pandas dataframe that contain discretized
@@ -14,7 +19,7 @@ def get_micro_adjustment(df_sig: pd.DataFrame, power: int = 6) -> pd.DataFrame:
         power (int): matrix power of B for microprice adjustment.
 
     Returns:
-        pd.DataFrame: _description_
+        pd.DataFrame: microprice adjustment for all imbalance, spread pairs.
     """
     nSpread, nImbalance = len(df_sig.ba_spread.unique()), len(df_sig.imbalance.unique())
     nCombination = nSpread * nImbalance

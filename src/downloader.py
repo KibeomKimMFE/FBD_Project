@@ -1,3 +1,10 @@
+"""
+this file downloads raw orderbook, price, trade data 
+using tardis.dev API. This is added just for the sake of
+showing how we downloaded the data.
+
+for more about this API, please go https://docs.tardis.dev
+"""
 from tardis_dev import datasets
 
 

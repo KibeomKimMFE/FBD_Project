@@ -1,10 +1,11 @@
 import os
 import glob
+import dask
 import numpy as np
 import pandas as pd
 
-from src.microprice import get_micro_adjustment
-from src.preprocessing import extract_features, symmetrize_data
+from microprice import get_micro_adjustment
+from preprocessing import extract_features, symmetrize_data
 
 
 def get_file_date(path: str) -> str:
@@ -17,7 +18,7 @@ if __name__ == "__main__":
 
     # set the path for raw and preprocessed folder
     # set the asset pair that you would like to calculate the microprice
-    ASSET = "adausdt"
+    ASSET = "btcusdt"
     WIN_LEN = 5
     RAW_DATA_PATH = "/Users/mac/Desktop/Repos/FBD_Project/datasets/raw/"
     PRC_DATA_PATH = "/Users/mac/Desktop/Repos/FBD_Project/datasets/processed/"
